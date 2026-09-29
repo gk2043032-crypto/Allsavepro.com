@@ -9,7 +9,7 @@ import httpx
 app = FastAPI(
     title="AllSavePro Media Engine",
     description="Universal video processing and chunked streaming gateway",
-    version="28.0.0" # Stable Direct Extraction Edition for Dailymotion & Rumble
+    version="29.0.0" # Final Dailymotion & Curl-Cffi Impersonation Edition
 )
 
 # Enable CORS for cross-origin requests from frontend hosts
@@ -21,7 +21,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Authenticated NanoStream HTTP Proxy (Only for platforms that require it like FB/Insta)
+# Authenticated NanoStream HTTP Proxy for Facebook & Instagram
 NANOSTREAM_PROXY = "http://gk:gk%28GK%29321@nanostream4x.duckdns.org:8080"
 
 
@@ -84,7 +84,7 @@ async def proxy_thumbnail(url: str = Query(..., description="Image URL to proxy"
 
 
 # ==========================================
-# Extraction Logic with Direct Routing for Dailymotion & Rumble
+# Extraction Logic with Curl-Cffi Impersonation for Dailymotion & Rumble
 # ==========================================
 @app.get("/api/info")
 def get_media_info(url: str = Query(..., description="Target media URL to extract")):
@@ -124,10 +124,10 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
         }
     }
 
-    # रंबल और डेलीमोशन दोनों के लिए पहले डायरेक्ट कनेक्शन (बिना प्रॉक्सी) का उपयोग होगा
+    # रंबल और डेलीमोशन के लिए curl_cffi आधारित क्रोम इम्पर्सनेशन का उपयोग
     if is_rumble or is_dailymotion:
         strategies = [
-            {'proxy': None, 'impersonate': ['chrome']},
+            {'proxy': None, 'impersonate': 'chrome'},
             {'proxy': None, 'impersonate': None}
         ]
     else:
@@ -145,12 +145,7 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
             opts['proxy'] = strat['proxy']
         
         if strat['impersonate']:
-            opts['impersonate'] = 'chrome'
-            opts['extractor_args'] = {
-                'generic': {'impersonate': strat['impersonate']},
-                'rumble': {'impersonate': strat['impersonate']},
-                'dailymotion': {'impersonate': strat['impersonate']}
-            }
+            opts['impersonate'] = strat['impersonate']
             
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
