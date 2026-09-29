@@ -9,7 +9,7 @@ import httpx
 app = FastAPI(
     title="AllSavePro Media Engine",
     description="Universal video processing and chunked streaming gateway",
-    version="2.7.0"
+    version="3.0.0" # Final Production Version
 )
 
 # Enable CORS for cross-origin requests from frontend hosts
@@ -125,7 +125,7 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
         'quiet': True,
         'no_warnings': True,
         'skip_download': True,
-        'noplaylist': True,
+        'noplaylist': False, # Changed to False to extract data from lists/shorts correctly
         'nocheckcertificate': True,
         'proxy': NANOSTREAM_PROXY,
         'socket_timeout': 30,
@@ -145,12 +145,27 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(sanitized_url, download=False)
 
+            # 1. अगर वीडियो किसी लिस्ट या entries के अंदर है, तो मुख्य वीडियो निकालें
+            if info and 'entries' in info and info['entries']:
+                for entry in info['entries']:
+                    if entry and (entry.get('url') or entry.get('formats')):
+                        info = entry
+                        break
+
             download_url = info.get("url")
+            
+            # 2. अगर सीधा URL नहीं है, तो formats में से सही वीडियो (Video Codec के साथ) निकालें
             if not download_url and info.get("formats"):
                 for fmt in reversed(info["formats"]):
-                    if fmt.get("url"):
+                    if fmt.get("url") and fmt.get("vcodec") != "none":
                         download_url = fmt.get("url")
                         break
+                # अगर फिर भी न मिले, तो कोई भी उपलब्ध url ले लें
+                if not download_url:
+                    for fmt in reversed(info["formats"]):
+                        if fmt.get("url"):
+                            download_url = fmt.get("url")
+                            break
 
             if not download_url:
                 raise HTTPException(
