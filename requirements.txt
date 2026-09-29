@@ -1,5 +1,5 @@
 fastapi
 uvicorn
-yt-dlp>=2024.03.10
+git+https://github.com/yt-dlp/yt-dlp.git
 httpx
 curl_cffi
