@@ -9,7 +9,7 @@ import httpx
 app = FastAPI(
     title="AllSavePro Media Engine",
     description="Universal video processing and chunked streaming gateway",
-    version="2.4.0"
+    version="2.7.0"
 )
 
 # Enable CORS for cross-origin requests from frontend hosts
@@ -177,8 +177,8 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
 @app.get("/api/stream")
 async def stream_media(url: str = Query(..., description="Direct CDN media URL to pipe")):
     """
-    Streams media in 64KB chunks to bypass hotlink restrictions
-    while maintaining memory under 10MB on Render's 512MB RAM tier.
+    Streams media in 64KB chunks with proper Referer headers to ensure
+    seamless native downloading across mobile and desktop browsers.
     """
     if not is_safe_public_url(url):
         raise HTTPException(
@@ -191,6 +191,7 @@ async def stream_media(url: str = Query(..., description="Direct CDN media URL t
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
             "Accept": "*/*",
             "Accept-Language": "en-US,en;q=0.9",
+            "Referer": "https://rumble.com/",
         }
 
         stream_timeout = httpx.Timeout(None, connect=25.0)
@@ -212,6 +213,7 @@ async def stream_media(url: str = Query(..., description="Direct CDN media URL t
     download_headers = {
         "Content-Disposition": 'attachment; filename="AllSavePro_Video.mp4"',
         "Content-Type": "video/mp4",
+        "Cache-Control": "no-cache",
     }
 
     return StreamingResponse(video_chunk_generator(), headers=download_headers)
