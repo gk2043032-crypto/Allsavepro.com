@@ -9,7 +9,7 @@ import httpx
 app = FastAPI(
     title="AllSavePro Media Engine",
     description="Universal video processing and chunked streaming gateway",
-    version="2.3.0"
+    version="2.4.0"
 )
 
 # Enable CORS for cross-origin requests from frontend hosts
@@ -92,7 +92,7 @@ def health_check():
 def get_media_info(url: str = Query(..., description="Target media URL to extract")):
     """
     Extracts direct CDN media links, thumbnails, and metadata via yt-dlp
-    routed through the Oracle NanoStream proxy with mobile user-agent bypass.
+    routed through the Oracle NanoStream proxy with Cloudflare impersonate bypass.
     """
     if not url or len(url) < 10 or len(url) > 2048:
         raise HTTPException(
@@ -119,7 +119,7 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
     if "rumble.com/shorts/" in sanitized_url:
         sanitized_url = sanitized_url.replace("/shorts/", "/v/")
 
-    # Clean options with iPhone Safari User-Agent to bypass Cloudflare anti-bot blocks
+    # Clean options with Cloudflare anti-bot impersonate bypass enabled via curl_cffi
     ydl_opts = {
         'format': 'best[ext=mp4]/best',
         'quiet': True,
@@ -129,10 +129,15 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
         'nocheckcertificate': True,
         'proxy': NANOSTREAM_PROXY,
         'socket_timeout': 30,
+        'extractor_args': {
+            'generic': {
+                'impersonate': 'chrome'
+            }
+        },
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
             'Accept-Language': 'en-US,en;q=0.9',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
         }
     }
 
@@ -183,7 +188,7 @@ async def stream_media(url: str = Query(..., description="Direct CDN media URL t
 
     async def video_chunk_generator():
         headers = {
-            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
             "Accept": "*/*",
             "Accept-Language": "en-US,en;q=0.9",
         }
