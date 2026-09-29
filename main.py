@@ -9,7 +9,7 @@ import httpx
 app = FastAPI(
     title="AllSavePro Media Engine",
     description="Universal video processing and chunked streaming gateway",
-    version="5.0.0" # Ultimate Full Production Version
+    version="7.0.0" # Final Deep-Audited Production Version
 )
 
 # Enable CORS for cross-origin requests from frontend hosts
@@ -80,14 +80,10 @@ def health_check():
 
 
 # ==========================================
-# Thumbnail Proxy System
+# Thumbnail Proxy System (Ensures images load on UI)
 # ==========================================
 @app.get("/api/thumbnail")
 async def proxy_thumbnail(url: str = Query(..., description="Image URL to proxy")):
-    """
-    Proxies thumbnail images to bypass CORS and Hotlink protection on the frontend.
-    This ensures images always load correctly in the result box.
-    """
     if not is_safe_public_url(url):
         raise HTTPException(status_code=403, detail="Invalid image source.")
 
@@ -117,10 +113,6 @@ async def proxy_thumbnail(url: str = Query(..., description="Image URL to proxy"
 
 @app.get("/api/info")
 def get_media_info(url: str = Query(..., description="Target media URL to extract")):
-    """
-    Extracts direct CDN media links, thumbnails, and metadata via yt-dlp
-    with smart fallback proxy routing and Cloudflare impersonate bypass.
-    """
     if not url or len(url) < 10 or len(url) > 2048:
         raise HTTPException(status_code=400, detail="Invalid URL length.")
 
@@ -133,15 +125,16 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
     if "rumble.com/shorts/" in sanitized_url:
         sanitized_url = sanitized_url.replace("/shorts/", "/v/")
 
+    # SMART PROXY ROUTING: Rumble के लिए Proxy पहले से ही बंद रखें ताकि 403 न आए
+    is_rumble = "rumble.com" in sanitized_url
+
     ydl_opts = {
         'format': 'best[ext=mp4]/best',
         'quiet': True,
         'no_warnings': True,
         'skip_download': True,
-        'noplaylist': False,
+        'noplaylist': False, # Playlists & Shorts fix
         'nocheckcertificate': True,
-        'proxy': NANOSTREAM_PROXY, # Default Proxy On for safety
-        'socket_timeout': 30,
         'extractor_args': {'generic': {'impersonate': 'chrome'}},
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -149,21 +142,27 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
         }
     }
 
+    # अगर रंबल नहीं है (जैसे Insta/FB), तो ही Proxy लगाएं
+    if not is_rumble:
+        ydl_opts['proxy'] = NANOSTREAM_PROXY
+
     try:
-        # Attempt 1: Safe extraction with Proxy
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(sanitized_url, download=False)
     except Exception:
-        # Attempt 2: Fallback without proxy for strict sites like Rumble
+        # SMART TOGGLE FALLBACK: अगर प्रॉक्सी से फेल हो तो बिना प्रॉक्सी, और बिना प्रॉक्सी से फेल हो तो प्रॉक्सी से
         if 'proxy' in ydl_opts:
             del ydl_opts['proxy']
+        else:
+            ydl_opts['proxy'] = NANOSTREAM_PROXY
+            
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(sanitized_url, download=False)
         except Exception as retry_err:
             raise HTTPException(status_code=400, detail=f"Extraction failure: {str(retry_err)}")
 
-    # Handle Playlists/Entries
+    # Handle Playlists/Entries (Rumble Shorts/Lists Fix)
     if info and 'entries' in info and info['entries']:
         for entry in info['entries']:
             if entry and (entry.get('url') or entry.get('formats')):
@@ -171,6 +170,8 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
                 break
 
     download_url = info.get("url")
+    
+    # Priority to video codec (Prevents Audio-Only or Blank videos)
     if not download_url and info.get("formats"):
         for fmt in reversed(info["formats"]):
             if fmt.get("url") and fmt.get("vcodec") != "none":
@@ -203,9 +204,6 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
 
 @app.get("/api/stream")
 async def stream_media(url: str = Query(..., description="Direct CDN media URL to pipe")):
-    """
-    Streams media in 64KB chunks with proper dynamic headers and Anti-Blank Video Shield.
-    """
     if not is_safe_public_url(url):
         raise HTTPException(status_code=403, detail="Invalid stream source.")
 
@@ -215,6 +213,7 @@ async def stream_media(url: str = Query(..., description="Direct CDN media URL t
         "Accept-Language": "en-US,en;q=0.9",
     }
     
+    # Dynamic Native Referer Setup
     dynamic_referer = get_dynamic_referer(url)
     if dynamic_referer:
         headers["Referer"] = dynamic_referer
@@ -222,18 +221,18 @@ async def stream_media(url: str = Query(..., description="Direct CDN media URL t
 
     timeout = httpx.Timeout(None, connect=20.0)
 
-    # Attempt 1: Stream with Proxy
+    # Attempt 1: Stream with Proxy (Safe for FB/Insta)
     client = httpx.AsyncClient(proxy=NANOSTREAM_PROXY, follow_redirects=True, timeout=timeout)
     request = client.build_request("GET", url, headers=headers)
     response = await client.send(request, stream=True)
     content_type = response.headers.get("content-type", "").lower()
 
-    # Anti-Blank Video Shield Fallback
+    # Anti-Blank Video Shield Fallback (If Proxy gets HTML Error Page like Rumble 403)
     if response.status_code != 200 or "text/html" in content_type:
         await response.aclose()
         await client.aclose()
         
-        # Attempt 2: Direct Stream without proxy
+        # Attempt 2: Direct Stream without proxy (Safe for Rumble)
         client = httpx.AsyncClient(follow_redirects=True, timeout=timeout)
         request = client.build_request("GET", url, headers=headers)
         response = await client.send(request, stream=True)
