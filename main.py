@@ -1,4 +1,4 @@
-Import ipaddress
+import ipaddress
 import urllib.parse
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
