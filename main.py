@@ -9,7 +9,7 @@ import httpx
 app = FastAPI(
     title="AllSavePro Media Engine",
     description="Universal video processing and chunked streaming gateway",
-    version="18.0.0" # Research-Backed Final Production Version
+    version="22.0.0" # Universal Open & Unrestricted Production Edition
 )
 
 # Enable CORS for cross-origin requests from frontend hosts
@@ -21,11 +21,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Authenticated NanoStream HTTP Proxy
+# Authenticated NanoStream HTTP Proxy for supported platforms
 NANOSTREAM_PROXY = "http://gk:gk%28GK%29321@nanostream4x.duckdns.org:8080"
 
 
 def clean_tracking_params(target_url: str) -> str:
+    """Strips social media tracking parameters that can interfere with extraction."""
     try:
         parsed = urllib.parse.urlparse(target_url)
         tracking_keys = {"utm_source", "utm_medium", "utm_campaign", "fbclid", "igsh", "ref", "s"}
@@ -38,6 +39,7 @@ def clean_tracking_params(target_url: str) -> str:
 
 
 def is_safe_public_url(target_url: str) -> bool:
+    """Validates target URL to prevent SSRF and internal scanning."""
     try:
         parsed = urllib.parse.urlparse(target_url)
         if parsed.scheme not in ("http", "https"):
@@ -54,84 +56,67 @@ def is_safe_public_url(target_url: str) -> bool:
 
 
 def get_dynamic_referer(cdn_url: str) -> str:
+    """Generates the correct native Referer for different platforms to prevent blocking."""
     cdn_url_lower = cdn_url.lower()
-    if "rmbl" in cdn_url_lower or "rumble" in cdn_url_lower or "akamaized.net" in cdn_url_lower:
+    if "rmbl" in cdn_url_lower or "rumble" in cdn_url_lower:
         return "https://rumble.com/"
     elif "instagram.com" in cdn_url_lower or "cdninstagram.com" in cdn_url_lower:
         return "https://www.instagram.com/"
     elif "fbcdn.net" in cdn_url_lower or "facebook.com" in cdn_url_lower:
         return "https://www.facebook.com/"
-    return "https://rumble.com/"
+    elif "dailymotion.com" in cdn_url_lower or "dmcdn.net" in cdn_url_lower:
+        return "https://www.dailymotion.com/"
+    return ""
 
 
 @app.get("/")
 async def home_page():
+    """Serves the index.html frontend directly at the root URL."""
     return FileResponse("index.html")
 
 
 @app.get("/health")
 def health_check():
+    """Keep-alive endpoint for Render free tier monitoring."""
     return {"status": "alive"}
 
 
 # ==========================================
-# Research-Backed Thumbnail Proxy System
+# Universal Thumbnail Proxy System
 # ==========================================
 @app.get("/api/thumbnail")
 async def proxy_thumbnail(url: str = Query(..., description="Image URL to proxy")):
     if not is_safe_public_url(url):
         raise HTTPException(status_code=403, detail="Invalid image source.")
 
-    # पूर्ण ब्राउज़र जैसे हेडर ताकि CDN इन्हें ब्लॉक न करे
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Referer": "https://rumble.com/",
-        "Sec-Ch-Ua": '"Chromium";v="122", "Not(A:Brand";v="8", "Google Chrome";v="122"',
-        "Sec-Ch-Ua-Mobile": "?0",
-        "Sec-Ch-Ua-Platform": '"Windows"',
-        "Sec-Fetch-Dest": "image",
-        "Sec-Fetch-Mode": "no-cors",
-        "Sec-Fetch-Site": "cross-site"
+        "Accept": "image/*,*/*;q=0.8",
     }
+    
+    dynamic_referer = get_dynamic_referer(url)
+    if dynamic_referer:
+        headers["Referer"] = dynamic_referer
+
+    # रंबल के लिए बिना रुके सीधा पास, बाक़ी सभी के लिए प्रॉक्सी/डायरेक्ट का सामान्य फ्लो
+    if "rumble.com" in url.lower() or "rmbl" in url.lower():
+        return {"thumbnail_url": url}
 
     async def image_chunk_generator():
-        timeout = httpx.Timeout(10.0)
+        timeout = httpx.Timeout(5.0) 
         client = None
         response = None
+        
         try:
-            # रंबल और अन्य CDN के लिए प्रॉक्सी और डायरेक्ट दोनों रास्तों को सुरक्षित क्रम में जांचना
-            proxies_to_check = [NANOSTREAM_PROXY, None]
+            client = httpx.AsyncClient(proxy=NANOSTREAM_PROXY, follow_redirects=True, timeout=timeout)
+            request = client.build_request("GET", url, headers=headers)
+            response = await client.send(request, stream=True)
             
-            for p_url in proxies_to_check:
-                try:
-                    client = httpx.AsyncClient(proxy=p_url, follow_redirects=True, timeout=timeout)
-                    request = client.build_request("GET", url, headers=headers)
-                    response = await client.send(request, stream=True)
-                    
-                    if response.status_code == 200:
-                        break
-                    else:
-                        await response.aclose()
-                        await client.aclose()
-                        client = None
-                        response = None
-                except Exception:
-                    if response:
-                        try: await response.aclose()
-                        except: pass
-                    if client:
-                        try: await client.aclose()
-                        except: pass
-                    client = None
-                    response = None
-
-            if response and response.status_code == 200:
+            if response.status_code == 200:
                 async for chunk in response.aiter_bytes(chunk_size=16384):
                     yield chunk
             else:
-                yield b""
+                yield b"" 
         except Exception:
             yield b""
         finally:
@@ -146,7 +131,7 @@ async def proxy_thumbnail(url: str = Query(..., description="Image URL to proxy"
 
 
 # ==========================================
-# Extraction Logic
+# Universal Video Extraction Logic
 # ==========================================
 @app.get("/api/info")
 def get_media_info(url: str = Query(..., description="Target media URL to extract")):
@@ -156,7 +141,7 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
     if not is_safe_public_url(url):
         raise HTTPException(status_code=403, detail="Access forbidden.")
 
-    # Strict YouTube Block Policy
+    # Strict YouTube Block Policy (Render Compliance)
     normalized_url = url.lower()
     if "youtube.com" in normalized_url or "youtu.be" in normalized_url:
         raise HTTPException(status_code=403, detail="Policy restriction: YouTube downloads are strictly prohibited.")
@@ -221,7 +206,7 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
             continue 
 
     if not info:
-        raise HTTPException(status_code=400, detail=f"Could not bypass protection. Error: {extraction_error}")
+        raise HTTPException(status_code=400, detail=f"Could not process media. Error: {extraction_error}")
 
     if 'entries' in info and info['entries']:
         for entry in info['entries']:
@@ -246,22 +231,18 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
         raise HTTPException(status_code=400, detail="Could not extract direct stream link.")
 
     raw_thumbnail = info.get("thumbnail") or ""
-    final_thumbnail = ""
-    if raw_thumbnail:
-        encoded_thumb = urllib.parse.quote(raw_thumbnail, safe='')
-        final_thumbnail = f"/api/thumbnail?url={encoded_thumb}"
 
     return {
         "success": True,
         "title": info.get("title") or "AllSavePro Media",
-        "thumbnail": final_thumbnail,
+        "thumbnail": raw_thumbnail,
         "duration": info.get("duration") or 0,
         "download_url": download_url
     }
 
 
 # ==========================================
-# Streaming System
+# Universal High-Speed Streaming System
 # ==========================================
 @app.get("/api/stream")
 async def stream_media(url: str = Query(..., description="Direct CDN media URL to pipe")):
