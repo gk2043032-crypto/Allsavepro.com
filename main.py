@@ -1,7 +1,7 @@
 import ipaddress
 import urllib.parse
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 import yt_dlp
 import httpx
@@ -73,6 +73,13 @@ def is_safe_public_url(target_url: str) -> bool:
         return True
     except Exception:
         return False
+
+
+# सीधे वेबसाइट दिखाने वाला मुख्य एंडपॉइंट (Root Home Route)
+@app.get("/")
+async def home_page():
+    """Serves the index.html frontend directly at the root URL."""
+    return FileResponse("index.html")
 
 
 @app.get("/health")
