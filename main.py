@@ -116,7 +116,7 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
     # Clean tracking tokens from URL
     sanitized_url = clean_tracking_params(url)
 
-    # yt-dlp engine extraction profile (Updated for Instagram Anti-Bot Bypass)
+    # yt-dlp engine extraction profile (Optimized for Universal Anti-Bot & Instagram Mobile API Bypass)
     ydl_opts = {
         'format': 'best[ext=mp4]/best',
         'quiet': True,
@@ -127,7 +127,8 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
         'socket_timeout': 30,
         'extractor_args': {
             'instagram': {
-                'api_version': ['v1']
+                'api_version': ['v1'],
+                'max_comments': [0],
             }
         },
         'http_headers': {
@@ -139,6 +140,8 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
             'Accept-Language': 'en-US,en;q=0.9',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
             'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'cross-site',
+            'X-IG-App-ID': '936619743392459',  # Official Instagram Mobile App Client ID to bypass guest restrictions
         }
     }
 
