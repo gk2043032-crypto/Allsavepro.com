@@ -123,6 +123,7 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
         'no_warnings': True,
         'skip_download': True,
         'noplaylist': True,
+        'nocheckcertificate': True,  # Bypasses SSL certificate key verification failures
         'proxy': NANOSTREAM_PROXY,
         'socket_timeout': 30,
         'extractor_args': {
