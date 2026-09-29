@@ -1,5 +1,5 @@
 import ipaddress
-from urllib.parse import urlparse
+import urllib.parse
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,7 +12,7 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Enable CORS for cross-origin requests from frontend hosts (e.g., Vercel, Netlify)
+# Enable CORS for cross-origin requests from frontend hosts
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -21,8 +21,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Authenticated NanoStream HTTP Proxy hosted on Oracle Cloud
-NANOSTREAM_PROXY = "http://gk:gk(GK)321@nanostream4x.duckdns.org:8080"
+# Authenticated NanoStream HTTP Proxy with RFC-compliant URL-encoded password
+NANOSTREAM_PROXY = "http://gk:gk%28GK%29321@nanostream4x.duckdns.org:8080"
+
+
+def clean_tracking_params(target_url: str) -> str:
+    """Strips social media tracking parameters that can interfere with extraction."""
+    try:
+        parsed = urllib.parse.urlparse(target_url)
+        tracking_keys = {"utm_source", "utm_medium", "utm_campaign", "fbclid", "igsh", "ref", "s"}
+        qs = urllib.parse.parse_qs(parsed.query)
+        clean_qs = {k: v for k, v in qs.items() if k.lower() not in tracking_keys}
+        new_query = urllib.parse.urlencode(clean_qs, doseq=True)
+        return urllib.parse.urlunparse(parsed._replace(query=new_query))
+    except Exception:
+        return target_url
 
 
 def is_safe_public_url(target_url: str) -> bool:
@@ -31,7 +44,7 @@ def is_safe_public_url(target_url: str) -> bool:
     and metadata exploitation attempts.
     """
     try:
-        parsed = urlparse(target_url)
+        parsed = urllib.parse.urlparse(target_url)
         
         # Only standard web transfer protocols are allowed
         if parsed.scheme not in ("http", "https"):
@@ -58,7 +71,7 @@ def is_safe_public_url(target_url: str) -> bool:
             if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
                 return False
         except ValueError:
-            # Hostname is a valid domain name (e.g., instagram.com, tiktokcdn.com)
+            # Hostname is a domain name
             pass
 
         return True
@@ -68,10 +81,7 @@ def is_safe_public_url(target_url: str) -> bool:
 
 @app.get("/health")
 def health_check():
-    """
-    Lightweight keep-alive endpoint for ping services (e.g., UptimeRobot)
-    to prevent Render from idling out. Consumes near-zero resources.
-    """
+    """Keep-alive endpoint for Render free tier monitoring."""
     return {"status": "alive"}
 
 
@@ -79,13 +89,13 @@ def health_check():
 def get_media_info(url: str = Query(..., description="Target media URL to extract")):
     """
     Extracts direct CDN media links, thumbnails, and metadata via yt-dlp
-    routed through the Oracle NanoStream proxy without downloading video content.
+    routed through the Oracle NanoStream proxy.
     """
-    # Strict length constraints to mitigate buffer overflow & malformed payload attacks
-    if not url or len(url) < 15 or len(url) > 450:
+    # Expanded length constraints for modern social media share URLs
+    if not url or len(url) < 10 or len(url) > 2048:
         raise HTTPException(
             status_code=400, 
-            detail="Invalid URL length: Must be between 15 and 450 characters."
+            detail="Invalid URL length: Must be between 10 and 2048 characters."
         )
 
     # Validate against internal network SSRF attempts
@@ -95,7 +105,7 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
             detail="Access forbidden: Target address rejected by security shield."
         )
 
-    # Enforce YouTube policy restriction on the backend layer
+    # Enforce YouTube policy restriction
     normalized_url = url.lower()
     if "youtube.com" in normalized_url or "youtu.be" in normalized_url:
         raise HTTPException(
@@ -103,32 +113,40 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
             detail="Policy restriction: YouTube downloads are strictly prohibited."
         )
 
+    # Clean tracking tokens from URL
+    sanitized_url = clean_tracking_params(url)
+
     # yt-dlp engine extraction profile
     ydl_opts = {
-        'format': 'best[ext=mp4]/best',   # Prefer consolidated MP4 stream
+        'format': 'best[ext=mp4]/best',
         'quiet': True,
         'no_warnings': True,
-        'skip_download': True,            # Extract metadata and URLs only
-        'noplaylist': True,               # Prevent playlist batch dumps
-        'proxy': NANOSTREAM_PROXY,        # Route all outgoing requests via Oracle IP
+        'skip_download': True,
+        'noplaylist': True,
+        'proxy': NANOSTREAM_PROXY,
+        'socket_timeout': 30,
         'http_headers': {
             'User-Agent': (
                 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
                 'AppleWebKit/537.36 (KHTML, like Gecko) '
-                'Chrome/122.0.0.0 Safari/537.36'
+                'Chrome/128.0.0.0 Safari/537.36'
             ),
             'Accept-Language': 'en-US,en;q=0.9',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
         }
     }
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
+            info = ydl.extract_info(sanitized_url, download=False)
 
-            # Retrieve the direct media download URL
+            # Retrieve direct media download URL
             download_url = info.get("url")
             if not download_url and info.get("formats"):
-                download_url = info["formats"][-1].get("url")
+                for fmt in reversed(info["formats"]):
+                    if fmt.get("url"):
+                        download_url = fmt.get("url")
+                        break
 
             if not download_url:
                 raise HTTPException(
@@ -148,17 +166,16 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
     except Exception as extraction_err:
         raise HTTPException(
             status_code=400, 
-            detail=f"Extraction failure: Media might be private or platform is unsupported."
+            detail=f"Extraction failure: {str(extraction_err)}"
         )
 
 
 @app.get("/api/stream")
 async def stream_media(url: str = Query(..., description="Direct CDN media URL to pipe")):
     """
-    Streams media in 64KB chunks to trigger native browser 'Save File' dialog.
-    Keeps memory usage under 10MB to maintain stability on Render's 512MB RAM tier.
+    Streams media in 64KB chunks to bypass hotlink restrictions
+    while maintaining memory under 10MB on Render's 512MB RAM tier.
     """
-    # Security check on stream target
     if not is_safe_public_url(url):
         raise HTTPException(
             status_code=403, 
@@ -170,14 +187,12 @@ async def stream_media(url: str = Query(..., description="Direct CDN media URL t
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/122.0.0.0 Safari/537.36"
+                "Chrome/128.0.0.0 Safari/537.36"
             )
         }
 
-        # Connection timeout is 20s, but stream read is unlimited to allow large downloads
-        stream_timeout = httpx.Timeout(None, connect=20.0)
+        stream_timeout = httpx.Timeout(None, connect=25.0)
 
-        # Pipe through the same NanoStream proxy to preserve CDN authorization tokens
         async with httpx.AsyncClient(
             proxy=NANOSTREAM_PROXY, 
             follow_redirects=True, 
@@ -189,11 +204,9 @@ async def stream_media(url: str = Query(..., description="Direct CDN media URL t
                         status_code=response.status_code, 
                         detail="CDN rejected media chunk stream request."
                     )
-                # Stream 64KB buffer chunks directly to client
                 async for chunk in response.aiter_bytes(chunk_size=65536):
                     yield chunk
 
-    # Headers forcing native browser save dialog
     download_headers = {
         "Content-Disposition": 'attachment; filename="AllSavePro_Video.mp4"',
         "Content-Type": "video/mp4",
