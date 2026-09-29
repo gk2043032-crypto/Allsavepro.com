@@ -9,7 +9,7 @@ import httpx
 app = FastAPI(
     title="AllSavePro Media Engine",
     description="Universal video processing and chunked streaming gateway",
-    version="10.0.0" # Perfected & Fully Audited Edition
+    version="12.0.0" # Final Master Edition (Fully Audited)
 )
 
 # Enable CORS for cross-origin requests from frontend hosts
@@ -26,6 +26,7 @@ NANOSTREAM_PROXY = "http://gk:gk%28GK%29321@nanostream4x.duckdns.org:8080"
 
 
 def clean_tracking_params(target_url: str) -> str:
+    """Strips social media tracking parameters that can interfere with extraction."""
     try:
         parsed = urllib.parse.urlparse(target_url)
         tracking_keys = {"utm_source", "utm_medium", "utm_campaign", "fbclid", "igsh", "ref", "s"}
@@ -38,6 +39,7 @@ def clean_tracking_params(target_url: str) -> str:
 
 
 def is_safe_public_url(target_url: str) -> bool:
+    """Validates target URL to prevent SSRF and internal scanning."""
     try:
         parsed = urllib.parse.urlparse(target_url)
         if parsed.scheme not in ("http", "https"):
@@ -54,6 +56,7 @@ def is_safe_public_url(target_url: str) -> bool:
 
 
 def get_dynamic_referer(cdn_url: str) -> str:
+    """Generates the correct native Referer for different platforms to prevent blocking."""
     cdn_url_lower = cdn_url.lower()
     if "rmbl" in cdn_url_lower or "rumble" in cdn_url_lower:
         return "https://rumble.com/"
@@ -66,16 +69,18 @@ def get_dynamic_referer(cdn_url: str) -> str:
 
 @app.get("/")
 async def home_page():
+    """Serves the index.html frontend directly at the root URL."""
     return FileResponse("index.html")
 
 
 @app.get("/health")
 def health_check():
+    """Keep-alive endpoint for Render free tier monitoring."""
     return {"status": "alive"}
 
 
 # ==========================================
-# Thumbnail Proxy System (With Smart Auto-Toggle)
+# Thumbnail Proxy System (Hotlink Bypass)
 # ==========================================
 @app.get("/api/thumbnail")
 async def proxy_thumbnail(url: str = Query(..., description="Image URL to proxy")):
@@ -131,6 +136,9 @@ async def proxy_thumbnail(url: str = Query(..., description="Image URL to proxy"
     return StreamingResponse(image_chunk_generator(), media_type="image/jpeg")
 
 
+# ==========================================
+# Extraction Logic (Multi-Strategy Engine)
+# ==========================================
 @app.get("/api/info")
 def get_media_info(url: str = Query(..., description="Target media URL to extract")):
     if not url or len(url) < 10 or len(url) > 2048:
@@ -139,14 +147,19 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
     if not is_safe_public_url(url):
         raise HTTPException(status_code=403, detail="Access forbidden.")
 
+    # RESTORED: Strict YouTube Block Policy (Do not remove)
+    normalized_url = url.lower()
+    if "youtube.com" in normalized_url or "youtu.be" in normalized_url:
+        raise HTTPException(status_code=403, detail="Policy restriction: YouTube downloads are strictly prohibited.")
+
     sanitized_url = clean_tracking_params(url)
 
     if "rumble.com/shorts/" in sanitized_url:
         sanitized_url = sanitized_url.replace("/shorts/", "/v/")
 
-    is_rumble = "rumble.com" in sanitized_url
+    is_rumble = "rumble.com" in sanitized_url or "rmbl" in sanitized_url
 
-    ydl_opts = {
+    base_opts = {
         'format': 'best[ext=mp4]/best',
         'quiet': True,
         'no_warnings': True,
@@ -157,26 +170,37 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
         'retries': 0, 
         'extractor_retries': 0,
         'fragment_retries': 0,
-        'extractor_args': {'generic': {'impersonate': 'chrome'}},
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'Accept-Language': 'en-US,en;q=0.9',
         }
     }
 
-    proxies_to_try = [None, NANOSTREAM_PROXY] if is_rumble else [NANOSTREAM_PROXY, None]
+    # SSL Error Fix: Never combine Impersonate with Proxy!
+    if is_rumble:
+        strategies = [
+            {'proxy': None, 'impersonate': 'chrome'},               # Strategy 1: Direct + Impersonate (Best for Rumble)
+            {'proxy': NANOSTREAM_PROXY, 'impersonate': None},       # Strategy 2: Proxy + Normal
+            {'proxy': None, 'impersonate': None}                    # Strategy 3: Direct + Normal
+        ]
+    else:
+        strategies = [
+            {'proxy': NANOSTREAM_PROXY, 'impersonate': None},       # Default for FB/Insta
+            {'proxy': None, 'impersonate': None}                    # Fallback for FB/Insta
+        ]
     
     info = None
     extraction_error = None
 
-    for proxy in proxies_to_try:
-        if proxy:
-            ydl_opts['proxy'] = proxy
-        elif 'proxy' in ydl_opts:
-            del ydl_opts['proxy']
+    for strat in strategies:
+        opts = base_opts.copy()
+        if strat['proxy']:
+            opts['proxy'] = strat['proxy']
+        if strat['impersonate']:
+            opts['extractor_args'] = {'generic': {'impersonate': strat['impersonate']}}
             
         try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(sanitized_url, download=False)
                 if info:
                     break 
@@ -185,8 +209,9 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
             continue 
 
     if not info:
-        raise HTTPException(status_code=400, detail=f"Could not bypass protection quickly. Error: {extraction_error}")
+        raise HTTPException(status_code=400, detail=f"Could not bypass protection. Please try again. Error: {extraction_error}")
 
+    # Parse Entries (Fix for Rumble Shorts/Lists)
     if 'entries' in info and info['entries']:
         for entry in info['entries']:
             if entry and (entry.get('url') or entry.get('formats')):
@@ -225,7 +250,7 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
 
 
 # ==========================================
-# Streaming System (With Smart Auto-Toggle for Speed)
+# Streaming System (Anti-Blank Video Shield)
 # ==========================================
 @app.get("/api/stream")
 async def stream_media(url: str = Query(..., description="Direct CDN media URL to pipe")):
@@ -257,18 +282,16 @@ async def stream_media(url: str = Query(..., description="Direct CDN media URL t
             response = await client.send(request, stream=True)
             content_type = response.headers.get("content-type", "").lower()
 
-            # अगर कनेक्शन सही है और HTML एरर नहीं है, तो लूप से बाहर आ जाओ (Success)
             if response.status_code == 200 and "text/html" not in content_type:
                 break 
             
-            # अगर एरर आया, तो इसे बंद करो और दूसरा ट्राई करो (बिना समय बर्बाद किए)
             await response.aclose()
             await client.aclose()
             client = None
             response = None
 
         if not response:
-            raise HTTPException(status_code=400, detail="CDN blocked the stream.")
+            raise HTTPException(status_code=400, detail="CDN blocked the stream. Please try again.")
 
         async def video_chunk_generator():
             try:
@@ -305,4 +328,4 @@ async def stream_media(url: str = Query(..., description="Direct CDN media URL t
         if client:
             try: await client.aclose()
             except: pass
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail="Internal server timeout or processing error.")
