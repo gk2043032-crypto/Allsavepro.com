@@ -9,7 +9,7 @@ import httpx
 app = FastAPI(
     title="AllSavePro Media Engine",
     description="Universal video processing and chunked streaming gateway",
-    version="27.0.0" # DailyMotion Formats Fix Edition
+    version="28.0.0" # Stable Direct Extraction Edition for Dailymotion & Rumble
 )
 
 # Enable CORS for cross-origin requests from frontend hosts
@@ -21,7 +21,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Authenticated NanoStream HTTP Proxy
+# Authenticated NanoStream HTTP Proxy (Only for platforms that require it like FB/Insta)
 NANOSTREAM_PROXY = "http://gk:gk%28GK%29321@nanostream4x.duckdns.org:8080"
 
 
@@ -84,7 +84,7 @@ async def proxy_thumbnail(url: str = Query(..., description="Image URL to proxy"
 
 
 # ==========================================
-# Extraction Logic with DailyMotion Fix
+# Extraction Logic with Direct Routing for Dailymotion & Rumble
 # ==========================================
 @app.get("/api/info")
 def get_media_info(url: str = Query(..., description="Target media URL to extract")):
@@ -124,16 +124,10 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
         }
     }
 
-    # प्लेटफॉर्म के आधार पर स्ट्रैटेजी और इम्परसोनेशन सेट करना
-    if is_rumble:
+    # रंबल और डेलीमोशन दोनों के लिए पहले डायरेक्ट कनेक्शन (बिना प्रॉक्सी) का उपयोग होगा
+    if is_rumble or is_dailymotion:
         strategies = [
             {'proxy': None, 'impersonate': ['chrome']},
-            {'proxy': None, 'impersonate': None}
-        ]
-    elif is_dailymotion:
-        strategies = [
-            {'proxy': None, 'impersonate': ['chrome']},
-            {'proxy': NANOSTREAM_PROXY, 'impersonate': None},
             {'proxy': None, 'impersonate': None}
         ]
     else:
@@ -225,9 +219,7 @@ async def stream_media(url: str = Query(..., description="Direct CDN media URL t
     is_rumble = "rumble.com" in url.lower() or "rmbl" in url.lower()
     is_dailymotion = "dailymotion.com" in url.lower() or "dmcdn.net" in url.lower()
 
-    if is_rumble:
-        proxies_to_try = [None, NANOSTREAM_PROXY]
-    elif is_dailymotion:
+    if is_rumble or is_dailymotion:
         proxies_to_try = [None, NANOSTREAM_PROXY]
     else:
         proxies_to_try = [NANOSTREAM_PROXY, None]
