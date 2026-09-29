@@ -194,10 +194,12 @@ async def stream_media(url: str = Query(..., description="Direct CDN media URL t
     async def video_chunk_generator():
         headers = {
             "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/128.0.0.0 Safari/537.36"
-            )
+                "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1 like Mac OS X) "
+                "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 "
+                "Mobile/15E148 Safari/604.1"
+            ),
+            "Accept": "*/*",
+            "Accept-Language": "en-US,en;q=0.9",
         }
 
         stream_timeout = httpx.Timeout(None, connect=25.0)
