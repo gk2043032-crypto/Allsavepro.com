@@ -9,7 +9,7 @@ import httpx
 app = FastAPI(
     title="AllSavePro Media Engine",
     description="Universal video processing and chunked streaming gateway",
-    version="16.0.0" # Final Fully-Audited & Research-Backed Production Version
+    version="26.0.0" # DailyMotion Stream & Playback Fix Edition
 )
 
 # Enable CORS for cross-origin requests from frontend hosts
@@ -21,7 +21,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Authenticated NanoStream HTTP Proxy for Facebook & Instagram
+# Authenticated NanoStream HTTP Proxy for Facebook, Instagram & DailyMotion
 NANOSTREAM_PROXY = "http://gk:gk%28GK%29321@nanostream4x.duckdns.org:8080"
 
 
@@ -64,6 +64,8 @@ def get_dynamic_referer(cdn_url: str) -> str:
         return "https://www.instagram.com/"
     elif "fbcdn.net" in cdn_url_lower or "facebook.com" in cdn_url_lower:
         return "https://www.facebook.com/"
+    elif "dailymotion.com" in cdn_url_lower or "dmcdn.net" in cdn_url_lower:
+        return "https://www.dailymotion.com/"
     return ""
 
 
@@ -80,64 +82,17 @@ def health_check():
 
 
 # ==========================================
-# Thumbnail Proxy System (Hotlink Protection Bypass)
+# Frictionless Thumbnail Endpoint
 # ==========================================
 @app.get("/api/thumbnail")
 async def proxy_thumbnail(url: str = Query(..., description="Image URL to proxy")):
     if not is_safe_public_url(url):
         raise HTTPException(status_code=403, detail="Invalid image source.")
-
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Accept": "image/*,*/*;q=0.8",
-    }
-    
-    dynamic_referer = get_dynamic_referer(url)
-    if dynamic_referer:
-        headers["Referer"] = dynamic_referer
-
-    is_rumble = "rumble.com" in url.lower() or "rmbl" in url.lower()
-    proxies_to_try = [None, NANOSTREAM_PROXY] if is_rumble else [NANOSTREAM_PROXY, None]
-
-    async def image_chunk_generator():
-        timeout = httpx.Timeout(5.0) 
-        client = None
-        response = None
-        
-        try:
-            for proxy_url in proxies_to_try:
-                client = httpx.AsyncClient(proxy=proxy_url, follow_redirects=True, timeout=timeout)
-                request = client.build_request("GET", url, headers=headers)
-                response = await client.send(request, stream=True)
-                
-                if response.status_code == 200:
-                    break 
-                
-                await response.aclose()
-                await client.aclose()
-                client = None
-                response = None
-
-            if response and response.status_code == 200:
-                async for chunk in response.aiter_bytes(chunk_size=16384):
-                    yield chunk
-            else:
-                yield b"" 
-        except Exception:
-            yield b""
-        finally:
-            if response:
-                try: await response.aclose()
-                except: pass
-            if client:
-                try: await client.aclose()
-                except: pass
-
-    return StreamingResponse(image_chunk_generator(), media_type="image/jpeg")
+    return {"thumbnail_url": url}
 
 
 # ==========================================
-# Extraction Logic (Research-Backed Stable Configuration)
+# Proven Video Extraction Logic (Multi-Strategy)
 # ==========================================
 @app.get("/api/info")
 def get_media_info(url: str = Query(..., description="Target media URL to extract")):
@@ -147,7 +102,7 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
     if not is_safe_public_url(url):
         raise HTTPException(status_code=403, detail="Access forbidden.")
 
-    # Strict YouTube Block Policy (Protection for Render Hosting)
+    # Strict YouTube Block Policy (Render Compliance)
     normalized_url = url.lower()
     if "youtube.com" in normalized_url or "youtu.be" in normalized_url:
         raise HTTPException(status_code=403, detail="Policy restriction: YouTube downloads are strictly prohibited.")
@@ -176,16 +131,15 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
         }
     }
 
-    # Clean strategy separation to avoid SSL and Cloudflare conflicts
     if is_rumble:
         strategies = [
-            {'proxy': None, 'impersonate': ['chrome']},  # Direct + TLS Fingerprint matching
-            {'proxy': None, 'impersonate': None}         # Pure Direct fallback
+            {'proxy': None, 'impersonate': ['chrome']},
+            {'proxy': None, 'impersonate': None}
         ]
     else:
         strategies = [
-            {'proxy': NANOSTREAM_PROXY, 'impersonate': None}, # Proxy for FB/Insta
-            {'proxy': None, 'impersonate': None}              # Fallback
+            {'proxy': NANOSTREAM_PROXY, 'impersonate': None},
+            {'proxy': None, 'impersonate': None}
         ]
     
     info = None
@@ -213,7 +167,7 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
             continue 
 
     if not info:
-        raise HTTPException(status_code=400, detail=f"Could not bypass protection. Error: {extraction_error}")
+        raise HTTPException(status_code=400, detail=f"Could not process media. Error: {extraction_error}")
 
     if 'entries' in info and info['entries']:
         for entry in info['entries']:
@@ -238,22 +192,18 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
         raise HTTPException(status_code=400, detail="Could not extract direct stream link.")
 
     raw_thumbnail = info.get("thumbnail") or ""
-    final_thumbnail = ""
-    if raw_thumbnail:
-        encoded_thumb = urllib.parse.quote(raw_thumbnail, safe='')
-        final_thumbnail = f"/api/thumbnail?url={encoded_thumb}"
 
     return {
         "success": True,
         "title": info.get("title") or "AllSavePro Media",
-        "thumbnail": final_thumbnail,
+        "thumbnail": raw_thumbnail,
         "duration": info.get("duration") or 0,
         "download_url": download_url
     }
 
 
 # ==========================================
-# Streaming System (Anti-Blank Video Shield)
+# Robust Streaming System (Fixed for DailyMotion & Others)
 # ==========================================
 @app.get("/api/stream")
 async def stream_media(url: str = Query(..., description="Direct CDN media URL to pipe")):
@@ -261,7 +211,7 @@ async def stream_media(url: str = Query(..., description="Direct CDN media URL t
         raise HTTPException(status_code=403, detail="Invalid stream source.")
 
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
         "Accept": "*/*",
         "Accept-Language": "en-US,en;q=0.9",
     }
@@ -272,7 +222,15 @@ async def stream_media(url: str = Query(..., description="Direct CDN media URL t
         headers["Origin"] = dynamic_referer.strip("/")
 
     is_rumble = "rumble.com" in url.lower() or "rmbl" in url.lower()
-    proxies_to_try = [None, NANOSTREAM_PROXY] if is_rumble else [NANOSTREAM_PROXY, None]
+    is_dailymotion = "dailymotion.com" in url.lower() or "dmcdn.net" in url.lower()
+
+    # डेलीमोशन और फेसबुक/इंस्टा के लिए प्रॉक्सी को प्राथमिकता, रंबल के लिए डायरेक्ट पहले
+    if is_rumble:
+        proxies_to_try = [None, NANOSTREAM_PROXY]
+    elif is_dailymotion:
+        proxies_to_try = [NANOSTREAM_PROXY, None]
+    else:
+        proxies_to_try = [NANOSTREAM_PROXY, None]
 
     timeout = httpx.Timeout(None, connect=10.0) 
     client = None
@@ -280,18 +238,28 @@ async def stream_media(url: str = Query(..., description="Direct CDN media URL t
 
     try:
         for proxy_url in proxies_to_try:
-            client = httpx.AsyncClient(proxy=proxy_url, follow_redirects=True, timeout=timeout)
-            request = client.build_request("GET", url, headers=headers)
-            response = await client.send(request, stream=True)
-            content_type = response.headers.get("content-type", "").lower()
+            try:
+                client = httpx.AsyncClient(proxy=proxy_url, follow_redirects=True, timeout=timeout)
+                request = client.build_request("GET", url, headers=headers)
+                response = await client.send(request, stream=True)
+                content_type = response.headers.get("content-type", "").lower()
 
-            if response.status_code == 200 and "text/html" not in content_type:
-                break 
-            
-            await response.aclose()
-            await client.aclose()
-            client = None
-            response = None
+                if response.status_code == 200 and "text/html" not in content_type:
+                    break 
+                
+                await response.aclose()
+                await client.aclose()
+                client = None
+                response = None
+            except Exception:
+                if response:
+                    try: await response.aclose()
+                    except: pass
+                if client:
+                    try: await client.aclose()
+                    except: pass
+                client = None
+                response = None
 
         if not response:
             raise HTTPException(status_code=400, detail="CDN blocked the stream. Please try again.")
