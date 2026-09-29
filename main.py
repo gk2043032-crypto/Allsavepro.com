@@ -9,7 +9,7 @@ import httpx
 app = FastAPI(
     title="AllSavePro Media Engine",
     description="Universal video processing and chunked streaming gateway",
-    version="1.0.0"
+    version="2.0.0"
 )
 
 # Enable CORS for cross-origin requests from frontend hosts
@@ -46,7 +46,6 @@ def is_safe_public_url(target_url: str) -> bool:
     try:
         parsed = urllib.parse.urlparse(target_url)
         
-        # Only standard web transfer protocols are allowed
         if parsed.scheme not in ("http", "https"):
             return False
 
@@ -54,24 +53,21 @@ def is_safe_public_url(target_url: str) -> bool:
         if not hostname:
             return False
 
-        # Block localhost, cloud metadata services, and internal endpoints
         blocked_hosts = {
             "localhost",
             "127.0.0.1",
             "0.0.0.0",
-            "169.254.169.254",          # Cloud instance metadata service
-            "nanostream4x.duckdns.org",   # Prevent proxy loopback targeting
+            "169.254.169.254",
+            "nanostream4x.duckdns.org",
         }
         if hostname.lower() in blocked_hosts:
             return False
 
-        # If hostname is an IP literal, verify it belongs to a public space
         try:
             ip = ipaddress.ip_address(hostname)
             if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
                 return False
         except ValueError:
-            # Hostname is a domain name
             pass
 
         return True
@@ -91,21 +87,18 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
     Extracts direct CDN media links, thumbnails, and metadata via yt-dlp
     routed through the Oracle NanoStream proxy.
     """
-    # Expanded length constraints for modern social media share URLs
     if not url or len(url) < 10 or len(url) > 2048:
         raise HTTPException(
             status_code=400, 
             detail="Invalid URL length: Must be between 10 and 2048 characters."
         )
 
-    # Validate against internal network SSRF attempts
     if not is_safe_public_url(url):
         raise HTTPException(
             status_code=403, 
             detail="Access forbidden: Target address rejected by security shield."
         )
 
-    # Enforce YouTube policy restriction
     normalized_url = url.lower()
     if "youtube.com" in normalized_url or "youtu.be" in normalized_url:
         raise HTTPException(
@@ -113,37 +106,22 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
             detail="Policy restriction: YouTube downloads are strictly prohibited."
         )
 
-    # Clean tracking tokens from URL
     sanitized_url = clean_tracking_params(url)
 
-    # yt-dlp engine extraction profile (Optimized for Universal Anti-Bot & Instagram Mobile API Bypass)
+    # Clean, robust, and universal yt-dlp options without restrictive constraints
     ydl_opts = {
         'format': 'best[ext=mp4]/best',
         'quiet': True,
         'no_warnings': True,
         'skip_download': True,
         'noplaylist': True,
-        'nocheckcertificate': True,  # Bypasses SSL certificate key verification failures
+        'nocheckcertificate': True,
         'proxy': NANOSTREAM_PROXY,
         'socket_timeout': 30,
-        'extractor_args': {
-            'instagram': {
-                'api_version': ['v1'],
-                'max_comments': [0],
-                'comment_sort': ['recent'],
-            }
-        },
         'http_headers': {
-            'User-Agent': (
-                'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1 like Mac OS X) '
-                'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 '
-                'Mobile/15E148 Safari/604.1'
-            ),
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
             'Accept-Language': 'en-US,en;q=0.9',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Sec-Fetch-Mode': 'navigate',
-            'Sec-Fetch-Site': 'cross-site',
-            'X-IG-App-ID': '936619743392459',  # Official Instagram Mobile App Client ID to bypass guest restrictions
         }
     }
 
@@ -151,7 +129,6 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(sanitized_url, download=False)
 
-            # Retrieve direct media download URL
             download_url = info.get("url")
             if not download_url and info.get("formats"):
                 for fmt in reversed(info["formats"]):
@@ -195,11 +172,7 @@ async def stream_media(url: str = Query(..., description="Direct CDN media URL t
 
     async def video_chunk_generator():
         headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1 like Mac OS X) "
-                "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 "
-                "Mobile/15E148 Safari/604.1"
-            ),
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
             "Accept": "*/*",
             "Accept-Language": "en-US,en;q=0.9",
         }
