@@ -9,7 +9,7 @@ import httpx
 app = FastAPI(
     title="AllSavePro Media Engine",
     description="Universal video processing and chunked streaming gateway",
-    version="7.0.0" # Final Deep-Audited Production Version
+    version="10.0.0" # Perfected & Fully Audited Edition
 )
 
 # Enable CORS for cross-origin requests from frontend hosts
@@ -26,7 +26,6 @@ NANOSTREAM_PROXY = "http://gk:gk%28GK%29321@nanostream4x.duckdns.org:8080"
 
 
 def clean_tracking_params(target_url: str) -> str:
-    """Strips social media tracking parameters that can interfere with extraction."""
     try:
         parsed = urllib.parse.urlparse(target_url)
         tracking_keys = {"utm_source", "utm_medium", "utm_campaign", "fbclid", "igsh", "ref", "s"}
@@ -39,7 +38,6 @@ def clean_tracking_params(target_url: str) -> str:
 
 
 def is_safe_public_url(target_url: str) -> bool:
-    """Validates target URL to prevent SSRF and internal scanning."""
     try:
         parsed = urllib.parse.urlparse(target_url)
         if parsed.scheme not in ("http", "https"):
@@ -56,7 +54,6 @@ def is_safe_public_url(target_url: str) -> bool:
 
 
 def get_dynamic_referer(cdn_url: str) -> str:
-    """Generates the correct native Referer for different platforms to prevent blocking."""
     cdn_url_lower = cdn_url.lower()
     if "rmbl" in cdn_url_lower or "rumble" in cdn_url_lower:
         return "https://rumble.com/"
@@ -69,18 +66,16 @@ def get_dynamic_referer(cdn_url: str) -> str:
 
 @app.get("/")
 async def home_page():
-    """Serves the index.html frontend directly at the root URL."""
     return FileResponse("index.html")
 
 
 @app.get("/health")
 def health_check():
-    """Keep-alive endpoint for Render free tier monitoring."""
     return {"status": "alive"}
 
 
 # ==========================================
-# Thumbnail Proxy System (Ensures images load on UI)
+# Thumbnail Proxy System (With Smart Auto-Toggle)
 # ==========================================
 @app.get("/api/thumbnail")
 async def proxy_thumbnail(url: str = Query(..., description="Image URL to proxy")):
@@ -96,17 +91,42 @@ async def proxy_thumbnail(url: str = Query(..., description="Image URL to proxy"
     if dynamic_referer:
         headers["Referer"] = dynamic_referer
 
+    is_rumble = "rumble.com" in url.lower() or "rmbl" in url.lower()
+    proxies_to_try = [None, NANOSTREAM_PROXY] if is_rumble else [NANOSTREAM_PROXY, None]
+
     async def image_chunk_generator():
+        timeout = httpx.Timeout(5.0) 
+        client = None
+        response = None
+        
         try:
-            async with httpx.AsyncClient(follow_redirects=True, timeout=10.0) as client:
-                async with client.stream("GET", url, headers=headers) as response:
-                    if response.status_code == 200:
-                        async for chunk in response.aiter_bytes(chunk_size=16384):
-                            yield chunk
-                    else:
-                        yield b"" 
+            for proxy_url in proxies_to_try:
+                client = httpx.AsyncClient(proxy=proxy_url, follow_redirects=True, timeout=timeout)
+                request = client.build_request("GET", url, headers=headers)
+                response = await client.send(request, stream=True)
+                
+                if response.status_code == 200:
+                    break 
+                
+                await response.aclose()
+                await client.aclose()
+                client = None
+                response = None
+
+            if response and response.status_code == 200:
+                async for chunk in response.aiter_bytes(chunk_size=16384):
+                    yield chunk
+            else:
+                yield b"" 
         except Exception:
             yield b""
+        finally:
+            if response:
+                try: await response.aclose()
+                except: pass
+            if client:
+                try: await client.aclose()
+                except: pass
 
     return StreamingResponse(image_chunk_generator(), media_type="image/jpeg")
 
@@ -121,11 +141,9 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
 
     sanitized_url = clean_tracking_params(url)
 
-    # Rumble Shorts URL Fix
     if "rumble.com/shorts/" in sanitized_url:
         sanitized_url = sanitized_url.replace("/shorts/", "/v/")
 
-    # SMART PROXY ROUTING: Rumble के लिए Proxy पहले से ही बंद रखें ताकि 403 न आए
     is_rumble = "rumble.com" in sanitized_url
 
     ydl_opts = {
@@ -133,8 +151,12 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
         'quiet': True,
         'no_warnings': True,
         'skip_download': True,
-        'noplaylist': False, # Playlists & Shorts fix
+        'noplaylist': False,
         'nocheckcertificate': True,
+        'socket_timeout': 10, 
+        'retries': 0, 
+        'extractor_retries': 0,
+        'fragment_retries': 0,
         'extractor_args': {'generic': {'impersonate': 'chrome'}},
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -142,28 +164,30 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
         }
     }
 
-    # अगर रंबल नहीं है (जैसे Insta/FB), तो ही Proxy लगाएं
-    if not is_rumble:
-        ydl_opts['proxy'] = NANOSTREAM_PROXY
+    proxies_to_try = [None, NANOSTREAM_PROXY] if is_rumble else [NANOSTREAM_PROXY, None]
+    
+    info = None
+    extraction_error = None
 
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(sanitized_url, download=False)
-    except Exception:
-        # SMART TOGGLE FALLBACK: अगर प्रॉक्सी से फेल हो तो बिना प्रॉक्सी, और बिना प्रॉक्सी से फेल हो तो प्रॉक्सी से
-        if 'proxy' in ydl_opts:
+    for proxy in proxies_to_try:
+        if proxy:
+            ydl_opts['proxy'] = proxy
+        elif 'proxy' in ydl_opts:
             del ydl_opts['proxy']
-        else:
-            ydl_opts['proxy'] = NANOSTREAM_PROXY
             
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(sanitized_url, download=False)
-        except Exception as retry_err:
-            raise HTTPException(status_code=400, detail=f"Extraction failure: {str(retry_err)}")
+                if info:
+                    break 
+        except Exception as e:
+            extraction_error = str(e)
+            continue 
 
-    # Handle Playlists/Entries (Rumble Shorts/Lists Fix)
-    if info and 'entries' in info and info['entries']:
+    if not info:
+        raise HTTPException(status_code=400, detail=f"Could not bypass protection quickly. Error: {extraction_error}")
+
+    if 'entries' in info and info['entries']:
         for entry in info['entries']:
             if entry and (entry.get('url') or entry.get('formats')):
                 info = entry
@@ -171,7 +195,6 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
 
     download_url = info.get("url")
     
-    # Priority to video codec (Prevents Audio-Only or Blank videos)
     if not download_url and info.get("formats"):
         for fmt in reversed(info["formats"]):
             if fmt.get("url") and fmt.get("vcodec") != "none":
@@ -186,7 +209,6 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
     if not download_url:
         raise HTTPException(status_code=400, detail="Could not extract direct stream link.")
 
-    # Thumbnail Proxy Routing
     raw_thumbnail = info.get("thumbnail") or ""
     final_thumbnail = ""
     if raw_thumbnail:
@@ -202,6 +224,9 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
     }
 
 
+# ==========================================
+# Streaming System (With Smart Auto-Toggle for Speed)
+# ==========================================
 @app.get("/api/stream")
 async def stream_media(url: str = Query(..., description="Direct CDN media URL to pipe")):
     if not is_safe_public_url(url):
@@ -213,48 +238,71 @@ async def stream_media(url: str = Query(..., description="Direct CDN media URL t
         "Accept-Language": "en-US,en;q=0.9",
     }
     
-    # Dynamic Native Referer Setup
     dynamic_referer = get_dynamic_referer(url)
     if dynamic_referer:
         headers["Referer"] = dynamic_referer
         headers["Origin"] = dynamic_referer.strip("/")
 
-    timeout = httpx.Timeout(None, connect=20.0)
+    is_rumble = "rumble.com" in url.lower() or "rmbl" in url.lower()
+    proxies_to_try = [None, NANOSTREAM_PROXY] if is_rumble else [NANOSTREAM_PROXY, None]
 
-    # Attempt 1: Stream with Proxy (Safe for FB/Insta)
-    client = httpx.AsyncClient(proxy=NANOSTREAM_PROXY, follow_redirects=True, timeout=timeout)
-    request = client.build_request("GET", url, headers=headers)
-    response = await client.send(request, stream=True)
-    content_type = response.headers.get("content-type", "").lower()
+    timeout = httpx.Timeout(None, connect=10.0) 
+    client = None
+    response = None
 
-    # Anti-Blank Video Shield Fallback (If Proxy gets HTML Error Page like Rumble 403)
-    if response.status_code != 200 or "text/html" in content_type:
-        await response.aclose()
-        await client.aclose()
-        
-        # Attempt 2: Direct Stream without proxy (Safe for Rumble)
-        client = httpx.AsyncClient(follow_redirects=True, timeout=timeout)
-        request = client.build_request("GET", url, headers=headers)
-        response = await client.send(request, stream=True)
-        content_type = response.headers.get("content-type", "").lower()
-        
-        if response.status_code != 200 or "text/html" in content_type:
+    try:
+        for proxy_url in proxies_to_try:
+            client = httpx.AsyncClient(proxy=proxy_url, follow_redirects=True, timeout=timeout)
+            request = client.build_request("GET", url, headers=headers)
+            response = await client.send(request, stream=True)
+            content_type = response.headers.get("content-type", "").lower()
+
+            # अगर कनेक्शन सही है और HTML एरर नहीं है, तो लूप से बाहर आ जाओ (Success)
+            if response.status_code == 200 and "text/html" not in content_type:
+                break 
+            
+            # अगर एरर आया, तो इसे बंद करो और दूसरा ट्राई करो (बिना समय बर्बाद किए)
             await response.aclose()
             await client.aclose()
+            client = None
+            response = None
+
+        if not response:
             raise HTTPException(status_code=400, detail="CDN blocked the stream.")
 
-    async def video_chunk_generator():
-        try:
-            async for chunk in response.aiter_bytes(chunk_size=65536):
-                yield chunk
-        finally:
-            await response.aclose()
-            await client.aclose()
+        async def video_chunk_generator():
+            try:
+                async for chunk in response.aiter_bytes(chunk_size=65536):
+                    yield chunk
+            finally:
+                if response:
+                    try: await response.aclose()
+                    except: pass
+                if client:
+                    try: await client.aclose()
+                    except: pass
 
-    download_headers = {
-        "Content-Disposition": 'attachment; filename="AllSavePro_Video.mp4"',
-        "Content-Type": "video/mp4",
-        "Cache-Control": "no-cache",
-    }
+        download_headers = {
+            "Content-Disposition": 'attachment; filename="AllSavePro_Video.mp4"',
+            "Content-Type": "video/mp4",
+            "Cache-Control": "no-cache",
+        }
 
-    return StreamingResponse(video_chunk_generator(), headers=download_headers)
+        return StreamingResponse(video_chunk_generator(), headers=download_headers)
+        
+    except HTTPException:
+        if response:
+            try: await response.aclose()
+            except: pass
+        if client:
+            try: await client.aclose()
+            except: pass
+        raise
+    except Exception as e:
+        if response:
+            try: await response.aclose()
+            except: pass
+        if client:
+            try: await client.aclose()
+            except: pass
+        raise HTTPException(status_code=400, detail=str(e))
