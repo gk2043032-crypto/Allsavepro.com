@@ -9,7 +9,7 @@ import httpx
 app = FastAPI(
     title="AllSavePro Media Engine",
     description="Universal video processing and chunked streaming gateway",
-    version="2.1.0"
+    version="2.2.0"
 )
 
 # Enable CORS for cross-origin requests from frontend hosts
@@ -92,7 +92,7 @@ def health_check():
 def get_media_info(url: str = Query(..., description="Target media URL to extract")):
     """
     Extracts direct CDN media links, thumbnails, and metadata via yt-dlp
-    routed through the Oracle NanoStream proxy.
+    routed through the Oracle NanoStream proxy with Cloudflare bypass.
     """
     if not url or len(url) < 10 or len(url) > 2048:
         raise HTTPException(
@@ -119,7 +119,7 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
     if "rumble.com/shorts/" in sanitized_url:
         sanitized_url = sanitized_url.replace("/shorts/", "/v/")
 
-    # Clean, robust, and universal yt-dlp options without restrictive constraints
+    # Clean, robust options with Cloudflare anti-bot impersonate bypass
     ydl_opts = {
         'format': 'best[ext=mp4]/best',
         'quiet': True,
@@ -129,6 +129,11 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
         'nocheckcertificate': True,
         'proxy': NANOSTREAM_PROXY,
         'socket_timeout': 30,
+        'extractor_args': {
+            'generic': {
+                'impersonate': 'chrome'
+            }
+        },
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
             'Accept-Language': 'en-US,en;q=0.9',
