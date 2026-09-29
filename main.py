@@ -9,7 +9,7 @@ import httpx
 app = FastAPI(
     title="AllSavePro Media Engine",
     description="Universal video processing and chunked streaming gateway",
-    version="2.0.0"
+    version="2.1.0"
 )
 
 # Enable CORS for cross-origin requests from frontend hosts
@@ -114,6 +114,10 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
         )
 
     sanitized_url = clean_tracking_params(url)
+
+    # Rumble Shorts URL Fix to standard format
+    if "rumble.com/shorts/" in sanitized_url:
+        sanitized_url = sanitized_url.replace("/shorts/", "/v/")
 
     # Clean, robust, and universal yt-dlp options without restrictive constraints
     ydl_opts = {
