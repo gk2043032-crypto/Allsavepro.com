@@ -9,7 +9,7 @@ import httpx
 app = FastAPI(
     title="AllSavePro Media Engine",
     description="Universal video processing and chunked streaming gateway",
-    version="3.0.0" # Final Production Version
+    version="4.0.0" # Final Production Stable Version
 )
 
 # Enable CORS for cross-origin requests from frontend hosts
@@ -75,6 +75,22 @@ def is_safe_public_url(target_url: str) -> bool:
         return False
 
 
+def get_dynamic_referer(cdn_url: str) -> str:
+    """
+    Dynamically generates the correct Referer and Origin based on the CDN URL.
+    This ensures Facebook, Instagram, and Rumble all get their correct native headers
+    without breaking each other's stream.
+    """
+    cdn_url_lower = cdn_url.lower()
+    if "rmbl" in cdn_url_lower or "rumble" in cdn_url_lower:
+        return "https://rumble.com/"
+    elif "instagram.com" in cdn_url_lower or "cdninstagram.com" in cdn_url_lower:
+        return "https://www.instagram.com/"
+    elif "fbcdn.net" in cdn_url_lower or "facebook.com" in cdn_url_lower:
+        return "https://www.facebook.com/"
+    return ""
+
+
 # सीधे वेबसाइट दिखाने वाला मुख्य एंडपॉइंट (Root Home Route)
 @app.get("/")
 async def home_page():
@@ -92,7 +108,7 @@ def health_check():
 def get_media_info(url: str = Query(..., description="Target media URL to extract")):
     """
     Extracts direct CDN media links, thumbnails, and metadata via yt-dlp
-    routed through the Oracle NanoStream proxy with Cloudflare impersonate bypass.
+    with smart fallback proxy routing and Cloudflare impersonate bypass.
     """
     if not url or len(url) < 10 or len(url) > 2048:
         raise HTTPException(
@@ -119,15 +135,15 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
     if "rumble.com/shorts/" in sanitized_url:
         sanitized_url = sanitized_url.replace("/shorts/", "/v/")
 
-    # Clean options with Cloudflare anti-bot impersonate bypass enabled via curl_cffi
+    # Base yt-dlp options
     ydl_opts = {
         'format': 'best[ext=mp4]/best',
         'quiet': True,
         'no_warnings': True,
         'skip_download': True,
-        'noplaylist': False, # Changed to False to extract data from lists/shorts correctly
+        'noplaylist': False, # Important for Rumble lists/shorts
         'nocheckcertificate': True,
-        'proxy': NANOSTREAM_PROXY,
+        'proxy': NANOSTREAM_PROXY, # Facebook/Instagram के लिए Proxy On
         'socket_timeout': 30,
         'extractor_args': {
             'generic': {
@@ -142,58 +158,62 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
     }
 
     try:
+        # Attempt 1: Proxy के साथ डेटा निकालने की कोशिश (FB/Insta के लिए सुरक्षित)
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(sanitized_url, download=False)
+    except Exception:
+        # Attempt 2: अगर Proxy पर 403 (Cloudflare) एरर आता है (खासकर Rumble पर), तो Proxy हटाकर डायरेक्ट निकालें
+        del ydl_opts['proxy']
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(sanitized_url, download=False)
+        except Exception as retry_err:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Extraction failure: {str(retry_err)}"
+            )
 
-            # 1. अगर वीडियो किसी लिस्ट या entries के अंदर है, तो मुख्य वीडियो निकालें
-            if info and 'entries' in info and info['entries']:
-                for entry in info['entries']:
-                    if entry and (entry.get('url') or entry.get('formats')):
-                        info = entry
-                        break
+    # 1. अगर वीडियो किसी लिस्ट या entries के अंदर है, तो मुख्य वीडियो निकालें
+    if info and 'entries' in info and info['entries']:
+        for entry in info['entries']:
+            if entry and (entry.get('url') or entry.get('formats')):
+                info = entry
+                break
 
-            download_url = info.get("url")
-            
-            # 2. अगर सीधा URL नहीं है, तो formats में से सही वीडियो (Video Codec के साथ) निकालें
-            if not download_url and info.get("formats"):
-                for fmt in reversed(info["formats"]):
-                    if fmt.get("url") and fmt.get("vcodec") != "none":
-                        download_url = fmt.get("url")
-                        break
-                # अगर फिर भी न मिले, तो कोई भी उपलब्ध url ले लें
-                if not download_url:
-                    for fmt in reversed(info["formats"]):
-                        if fmt.get("url"):
-                            download_url = fmt.get("url")
-                            break
+    download_url = info.get("url")
+    
+    # 2. अगर सीधा URL नहीं है, तो formats में से सही वीडियो (Video Codec के साथ) निकालें
+    if not download_url and info.get("formats"):
+        for fmt in reversed(info["formats"]):
+            if fmt.get("url") and fmt.get("vcodec") != "none":
+                download_url = fmt.get("url")
+                break
+        # अगर फिर भी न मिले, तो कोई भी उपलब्ध url ले लें
+        if not download_url:
+            for fmt in reversed(info["formats"]):
+                if fmt.get("url"):
+                    download_url = fmt.get("url")
+                    break
 
-            if not download_url:
-                raise HTTPException(
-                    status_code=400, 
-                    detail="Could not extract direct stream link from this source."
-                )
-
-            return {
-                "success": True,
-                "title": info.get("title") or "AllSavePro Media",
-                "thumbnail": info.get("thumbnail") or "",
-                "duration": info.get("duration") or 0,
-                "download_url": download_url
-            }
-    except HTTPException:
-        raise
-    except Exception as extraction_err:
+    if not download_url:
         raise HTTPException(
             status_code=400, 
-            detail=f"Extraction failure: {str(extraction_err)}"
+            detail="Could not extract direct stream link from this source."
         )
+
+    return {
+        "success": True,
+        "title": info.get("title") or "AllSavePro Media",
+        "thumbnail": info.get("thumbnail") or "",
+        "duration": info.get("duration") or 0,
+        "download_url": download_url
+    }
 
 
 @app.get("/api/stream")
 async def stream_media(url: str = Query(..., description="Direct CDN media URL to pipe")):
     """
-    Streams media in 64KB chunks with proper Referer headers to ensure
-    seamless native downloading across mobile and desktop browsers.
+    Streams media in 64KB chunks with proper dynamic headers and Anti-Blank Video Shield.
     """
     if not is_safe_public_url(url):
         raise HTTPException(
@@ -201,29 +221,55 @@ async def stream_media(url: str = Query(..., description="Direct CDN media URL t
             detail="Access forbidden: Invalid stream source."
         )
 
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+        "Accept": "*/*",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+    
+    # Dynamic Headers: सिर्फ उस वेबसाइट का हेडर सेट करें जिसका वीडियो है, ताकि दूसरे न टूटें
+    dynamic_referer = get_dynamic_referer(url)
+    if dynamic_referer:
+        headers["Referer"] = dynamic_referer
+        headers["Origin"] = dynamic_referer.strip("/")
+
+    timeout = httpx.Timeout(None, connect=20.0)
+
+    # Attempt 1: Proxy के साथ स्ट्रीम कनेक्ट करें
+    client = httpx.AsyncClient(proxy=NANOSTREAM_PROXY, follow_redirects=True, timeout=timeout)
+    request = client.build_request("GET", url, headers=headers)
+    response = await client.send(request, stream=True)
+    
+    content_type = response.headers.get("content-type", "").lower()
+
+    # ANTI-BLANK VIDEO SHIELD: अगर वीडियो की जगह HTML एरर आ रहा है, तो प्रॉक्सी हटाकर सीधा कनेक्ट करें
+    if response.status_code != 200 or "text/html" in content_type:
+        await response.aclose()
+        await client.aclose()
+        
+        # Attempt 2: डायरेक्ट स्ट्रीम (बिना प्रॉक्सी)
+        client = httpx.AsyncClient(follow_redirects=True, timeout=timeout)
+        request = client.build_request("GET", url, headers=headers)
+        response = await client.send(request, stream=True)
+        
+        content_type = response.headers.get("content-type", "").lower()
+        
+        # अगर फिर भी HTML एरर आता है, तो ब्लैंक वीडियो डाउनलोड करने के बजाय कनेक्शन रोक दें
+        if response.status_code != 200 or "text/html" in content_type:
+            await response.aclose()
+            await client.aclose()
+            raise HTTPException(
+                status_code=400, 
+                detail="CDN blocked the stream. Anti-Blank Video Shield prevented corrupt download."
+            )
+
     async def video_chunk_generator():
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-            "Accept": "*/*",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Referer": "https://rumble.com/",
-        }
-
-        stream_timeout = httpx.Timeout(None, connect=25.0)
-
-        async with httpx.AsyncClient(
-            proxy=NANOSTREAM_PROXY, 
-            follow_redirects=True, 
-            timeout=stream_timeout
-        ) as client:
-            async with client.stream("GET", url, headers=headers) as response:
-                if response.status_code != 200:
-                    raise HTTPException(
-                        status_code=response.status_code, 
-                        detail="CDN rejected media chunk stream request."
-                    )
-                async for chunk in response.aiter_bytes(chunk_size=65536):
-                    yield chunk
+        try:
+            async for chunk in response.aiter_bytes(chunk_size=65536):
+                yield chunk
+        finally:
+            await response.aclose()
+            await client.aclose()
 
     download_headers = {
         "Content-Disposition": 'attachment; filename="AllSavePro_Video.mp4"',
