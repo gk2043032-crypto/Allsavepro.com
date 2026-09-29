@@ -130,6 +130,7 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
             'instagram': {
                 'api_version': ['v1'],
                 'max_comments': [0],
+                'comment_sort': ['recent'],
             }
         },
         'http_headers': {
