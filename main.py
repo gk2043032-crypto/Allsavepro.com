@@ -9,7 +9,7 @@ import httpx
 app = FastAPI(
     title="AllSavePro Media Engine",
     description="Universal video processing and chunked streaming gateway",
-    version="26.0.0" # DailyMotion Stream & Playback Fix Edition
+    version="27.0.0" # DailyMotion Formats Fix Edition
 )
 
 # Enable CORS for cross-origin requests from frontend hosts
@@ -21,12 +21,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Authenticated NanoStream HTTP Proxy for Facebook, Instagram & DailyMotion
+# Authenticated NanoStream HTTP Proxy
 NANOSTREAM_PROXY = "http://gk:gk%28GK%29321@nanostream4x.duckdns.org:8080"
 
 
 def clean_tracking_params(target_url: str) -> str:
-    """Strips social media tracking parameters that can interfere with extraction."""
     try:
         parsed = urllib.parse.urlparse(target_url)
         tracking_keys = {"utm_source", "utm_medium", "utm_campaign", "fbclid", "igsh", "ref", "s"}
@@ -39,7 +38,6 @@ def clean_tracking_params(target_url: str) -> str:
 
 
 def is_safe_public_url(target_url: str) -> bool:
-    """Validates target URL to prevent SSRF and internal scanning."""
     try:
         parsed = urllib.parse.urlparse(target_url)
         if parsed.scheme not in ("http", "https"):
@@ -56,7 +54,6 @@ def is_safe_public_url(target_url: str) -> bool:
 
 
 def get_dynamic_referer(cdn_url: str) -> str:
-    """Generates the correct native Referer for different platforms to prevent blocking."""
     cdn_url_lower = cdn_url.lower()
     if "rmbl" in cdn_url_lower or "rumble" in cdn_url_lower:
         return "https://rumble.com/"
@@ -71,19 +68,14 @@ def get_dynamic_referer(cdn_url: str) -> str:
 
 @app.get("/")
 async def home_page():
-    """Serves the index.html frontend directly at the root URL."""
     return FileResponse("index.html")
 
 
 @app.get("/health")
 def health_check():
-    """Keep-alive endpoint for Render free tier monitoring."""
     return {"status": "alive"}
 
 
-# ==========================================
-# Frictionless Thumbnail Endpoint
-# ==========================================
 @app.get("/api/thumbnail")
 async def proxy_thumbnail(url: str = Query(..., description="Image URL to proxy")):
     if not is_safe_public_url(url):
@@ -92,7 +84,7 @@ async def proxy_thumbnail(url: str = Query(..., description="Image URL to proxy"
 
 
 # ==========================================
-# Proven Video Extraction Logic (Multi-Strategy)
+# Extraction Logic with DailyMotion Fix
 # ==========================================
 @app.get("/api/info")
 def get_media_info(url: str = Query(..., description="Target media URL to extract")):
@@ -102,7 +94,7 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
     if not is_safe_public_url(url):
         raise HTTPException(status_code=403, detail="Access forbidden.")
 
-    # Strict YouTube Block Policy (Render Compliance)
+    # Strict YouTube Block Policy
     normalized_url = url.lower()
     if "youtube.com" in normalized_url or "youtu.be" in normalized_url:
         raise HTTPException(status_code=403, detail="Policy restriction: YouTube downloads are strictly prohibited.")
@@ -113,6 +105,7 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
         sanitized_url = sanitized_url.replace("/shorts/", "/v/")
 
     is_rumble = "rumble.com" in sanitized_url or "rmbl" in sanitized_url
+    is_dailymotion = "dailymotion.com" in sanitized_url or "dai.ly" in sanitized_url
 
     base_opts = {
         'format': 'best[ext=mp4]/best',
@@ -121,19 +114,26 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
         'skip_download': True,
         'noplaylist': False,
         'nocheckcertificate': True,
-        'socket_timeout': 15, 
-        'retries': 0, 
-        'extractor_retries': 0,
-        'fragment_retries': 0,
+        'socket_timeout': 20, 
+        'retries': 2, 
+        'extractor_retries': 2,
+        'fragment_retries': 2,
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
             'Accept-Language': 'en-US,en;q=0.9',
         }
     }
 
+    # प्लेटफॉर्म के आधार पर स्ट्रैटेजी और इम्परसोनेशन सेट करना
     if is_rumble:
         strategies = [
             {'proxy': None, 'impersonate': ['chrome']},
+            {'proxy': None, 'impersonate': None}
+        ]
+    elif is_dailymotion:
+        strategies = [
+            {'proxy': None, 'impersonate': ['chrome']},
+            {'proxy': NANOSTREAM_PROXY, 'impersonate': None},
             {'proxy': None, 'impersonate': None}
         ]
     else:
@@ -154,7 +154,8 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
             opts['impersonate'] = 'chrome'
             opts['extractor_args'] = {
                 'generic': {'impersonate': strat['impersonate']},
-                'rumble': {'impersonate': strat['impersonate']}
+                'rumble': {'impersonate': strat['impersonate']},
+                'dailymotion': {'impersonate': strat['impersonate']}
             }
             
         try:
@@ -203,7 +204,7 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
 
 
 # ==========================================
-# Robust Streaming System (Fixed for DailyMotion & Others)
+# Streaming System
 # ==========================================
 @app.get("/api/stream")
 async def stream_media(url: str = Query(..., description="Direct CDN media URL to pipe")):
@@ -211,7 +212,7 @@ async def stream_media(url: str = Query(..., description="Direct CDN media URL t
         raise HTTPException(status_code=403, detail="Invalid stream source.")
 
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Accept": "*/*",
         "Accept-Language": "en-US,en;q=0.9",
     }
@@ -224,11 +225,10 @@ async def stream_media(url: str = Query(..., description="Direct CDN media URL t
     is_rumble = "rumble.com" in url.lower() or "rmbl" in url.lower()
     is_dailymotion = "dailymotion.com" in url.lower() or "dmcdn.net" in url.lower()
 
-    # डेलीमोशन और फेसबुक/इंस्टा के लिए प्रॉक्सी को प्राथमिकता, रंबल के लिए डायरेक्ट पहले
     if is_rumble:
         proxies_to_try = [None, NANOSTREAM_PROXY]
     elif is_dailymotion:
-        proxies_to_try = [NANOSTREAM_PROXY, None]
+        proxies_to_try = [None, NANOSTREAM_PROXY]
     else:
         proxies_to_try = [NANOSTREAM_PROXY, None]
 
