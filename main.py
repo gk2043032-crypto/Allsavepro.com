@@ -9,7 +9,7 @@ import httpx
 app = FastAPI(
     title="AllSavePro Media Engine",
     description="Universal video processing and chunked streaming gateway",
-    version="13.0.0" # Cloudflare Impersonate Bypass Engine
+    version="14.0.0" # Strict Extractor Args Fix for Cloudflare
 )
 
 # Enable CORS for cross-origin requests from frontend hosts
@@ -132,7 +132,7 @@ async def proxy_thumbnail(url: str = Query(..., description="Image URL to proxy"
 
 
 # ==========================================
-# Extraction Logic (Cloudflare Bypass Config)
+# Extraction Logic
 # ==========================================
 @app.get("/api/info")
 def get_media_info(url: str = Query(..., description="Target media URL to extract")):
@@ -190,10 +190,14 @@ def get_media_info(url: str = Query(..., description="Target media URL to extrac
         if strat['proxy']:
             opts['proxy'] = strat['proxy']
         
-        # Proper Cloudflare Impersonate implementation
         if strat['impersonate']:
-            opts['impersonate'] = strat['impersonate'] # Modern yt-dlp
-            opts['extractor_args'] = {'all': {'impersonate': strat['impersonate']}} # Legacy support
+            # Exact Fix: Explicitly targeting 'generic' and 'rumble' extractors as demanded by the error log
+            opts['extractor_args'] = {
+                'generic': {'impersonate': strat['impersonate']},
+                'rumble': {'impersonate': strat['impersonate']}
+            }
+            # Global impersonate for newer yt-dlp versions
+            opts['impersonate'] = strat['impersonate']
             
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
